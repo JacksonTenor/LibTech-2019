@@ -1,0 +1,3 @@
+function menuMaker() {
+  SpreadsheetApp.getUi().createMenu('MyNewMenu').addItem('Item1', 'function1').addItem('Item2', 'function2').addToUi();
+}

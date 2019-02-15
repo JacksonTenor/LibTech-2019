@@ -1,0 +1,32 @@
+//Select the spreadsheet the user currently has open
+var ss = SpreadsheetApp.getActiveSpreadsheet();
+
+//Select the sheet the user currently has open
+var sheet = ss.getActiveSheet();
+
+//Writing
+//Set a single cell's value
+sheet.getRange('A1').setValue('Hello World!');
+
+//Set the value for a column of cells (rows 1 to 10)
+for(var i=1; i<= 10; i++){
+	sheet.getRange('B' + i).setValue('Hi!');
+}
+
+//When setting values, use a two dimensional array, 
+
+//Set the value for a column of cells
+sheet.getRange("C1:C10").setValues([["First"], ["Second"], ["Third"], ["Fourth"], ["Fifth"], ["Sixth"], ["Seventh"], ["Eighth"], ["Ninth"], ["Tenth"]]);
+
+//Set the value for a row of cells
+sheet.getRange("A11:E11").setValues([[1, 2, 3, 4, 5]]);
+
+
+//Reading
+//Single Cell
+var v = sheet.getRange('A1').getValue();
+//Print the value we found
+Logger.log(v);
+
+//Range of Cells
+Logger.log(sheet.getRange('C1:C10').getValues());
