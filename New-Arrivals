@@ -1,0 +1,183 @@
+//variables for things we will be using often
+var ui = SpreadsheetApp.getUi();
+var ss = SpreadsheetApp.getActiveSpreadsheet();
+var sheet = ss.getActiveSheet();
+var prod = SpreadsheetApp.openById("SPREADSHEET ID"); 
+
+var backupFolderId = "FOLDER ID";
+var backupFolder = DriveApp.getFolderById(backupFolderId);
+
+
+//Create the menu
+function menuMaker() {
+  SpreadsheetApp.getUi().createMenu('Run Scripts').addItem('Update', 'updateSpreadsheet').addItem('Check API Calls', 'checkApi').addItem('Send to Production', 'sendToProduction').addToUi();
+  SpreadsheetApp.getUi().createMenu('Run Demo Scripts').addItem('MMSID', 'almaMMSID').addItem('Metadata', 'almaMetaData').addItem('Google Books', 'googleBooks').addToUi();
+
+}
+
+
+
+function updateSpreadsheet() {  
+  almaMMSID();
+  almaMetaData();
+  googleBooks();
+}
+
+//Checking number of API calls to be made
+function checkApi(){
+  var count = 0;
+  for(var i=1; i<sheet.getLastRow(); i++){
+    if(sheet.getRange("A"+i).getValue() != "" &&sheet.getRange("B"+i).getValue() == ""){
+      count ++;
+    }
+  }
+  ui.alert('The sheet will make ' + count + ' calls to Alma');
+}
+
+//Sending data to production
+function sendToProduction(){
+  DriveApp.getFileById(ss.getId()).makeCopy(new Date(), backupFolder);
+  var prodSheet = sheet.copyTo(prod);
+  prodSheet.setName(new Date().toString());
+  sheet.clear();
+  sheet.getRange('A1').setValue('OCLC');
+  sheet.getRange('B1').setValue('MMS ID');
+  sheet.getRange('D1').setValue('ISBN');
+  sheet.getRange('E1').setValue('Sorting Title');
+  sheet.getRange('F1').setValue('Title');
+  sheet.getRange('G1').setValue('Author');
+}
+
+function almaMMSID(){
+  var baseUrl = "https://na01.alma.exlibrisgroup.com/view/sru/01UMN_INST?version=1.2&operation=searchRetrieve&recordSchema=marcxml&query=alma.other_system_number=(OCoLC)";
+  var limit = ss.getLastRow(); //The last row of the spreadsheet with something in it
+  
+  //Go through each row, building links to the resources on our library webpage for each one
+  for(var i=2; i <= limit; i++){
+    //Check that the cells contain the needed data
+    if(sheet.getRange("A"+i).getValue() !== "" && sheet.getRange("B"+i).getValue() == ""){
+      var oclc = sheet.getRange("A"+i).getValue();
+      //Only call the API if this row hasn't been processed yet
+      if (oclc != "" && sheet.getRange("B"+i).getValue() == ""){
+        var url = baseUrl + oclc; //This builds the entire URL for the api call
+        //Call to that API
+        var response = UrlFetchApp.fetch(url, {muteHttpExceptions: true});
+        var root = XmlService.parse(response.getContentText()).getRootElement();
+        var namespace = root.getNamespace();
+        if(root.getChild("numberOfRecords", namespace).getText() == "0"){
+          //No titles found with that OCLC
+          sheet.getRange("B"+i).setValue("OCLC Not Found");
+        }else{
+          //Get the bibId from the first record with matching OCLC.
+          var bibId = root.getChild("records", namespace).getChild("record", namespace).getChild("recordIdentifier", namespace).getText();
+          sheet.getRange("B"+ i).setValue(bibId);
+        }
+      }
+    }
+  }
+}
+
+function almaMetaData(){
+  //Setting up Alma API variables. We will use these later when we make the api calls.
+  var apiKey = 'API_KEY';
+  var apiSuffix = '?apikey=' + apiKey;
+  var baseUrl = 'https://api-na.hosted.exlibrisgroup.com/almaws/v1/bibs/';
+  var limit = ss.getLastRow(); //The last row of the spreadsheet with something in it
+
+  
+  //Sheet Titles
+  sheet.getRange('A1').setValue('OCLC');
+  sheet.getRange('B1').setValue('MMS ID');
+  sheet.getRange('D1').setValue('ISBN');
+  sheet.getRange('E1').setValue('Sorting Title');
+  sheet.getRange('F1').setValue('Title');
+  sheet.getRange('G1').setValue('Author');
+  
+  //Calling the Alma API
+  //Alma API will only be called if column B is empty to prevent unneccessary calls
+  //If barcode is not found, an error message "Barcode not found" will be written to column B, otherwise data will be recorded
+  
+  for(var i=2; i <= limit; i++){
+    var mmsid = sheet.getRange("B"+i).getValue();
+    //Make sure the needed information is there and that the result spot is empty. This prevents us from making unnecessary API calls.
+    if (mmsid && sheet.getRange("D"+i).getValue() == ""){
+      //Build the URL 
+      var url = baseUrl + mmsid + apiSuffix;
+      //Call the API
+      var response = UrlFetchApp.fetch(url, {muteHttpExceptions: true});
+      //Fetch the data
+      var root = XmlService.parse(response.getContentText()).getRootElement();
+      if(response.getResponseCode() != 200){
+        sheet.getRange("D"+i).setValue("MMSID Not Found");
+      }else{        
+        var isbn = "";
+        var title = "";
+        var author = "";
+        //Parsing the XML to get the desired fields
+        if(root.getChild('isbn')){
+          var isbn = root.getChild('isbn').getText();
+        }
+        if(root.getChild('title')){
+          var title = root.getChild('title').getText();
+          var sortingTitle = title.split(" ");
+          //Remove the first word from the title if we don't care about it
+          if(sortingTitle[0].toLowerCase() == "the" || sortingTitle[0].toLowerCase() == "a" || sortingTitle[0].toLowerCase() == "an"){
+            sortingTitle.shift();
+            sortingTitle = sortingTitle.join(" ");
+          }else{
+            sortingTitle = title;
+          }
+        }
+        if(root.getChild('author')){
+          var author = root.getChild('author').getText();
+        }        
+        //Removes Slashes, periods, and spaces at the end of titles, librarians might care about these but users don't
+        while(title.substr(title.length - 1) == "/" || title.substr(title.length - 1) == " " || title.substr(title.length - 1) == "."){
+          title = title.substring(0, title.length - 1);
+        }
+        while(author.substr(author.length - 1) == "," || author.substr(author.length - 1) == " "){
+          author = author.substring(0, author.length - 1);
+        }
+        sheet.getRange("D"+i).setValue(isbn).setNumberFormat("@");
+        sheet.getRange("E"+i).setValue(sortingTitle);
+        sheet.getRange("F"+i).setValue(title);
+        sheet.getRange("G"+i).setValue(author); 
+      }
+    }
+  }
+}
+
+function googleBooks(){
+    //Setting up Google Books API - This one retrieves cover images
+  var apiKey = 'Google_Books_Key';
+  var baseUrl = 'https://www.googleapis.com/books/v1/volumes?q=isbn:';
+  var urlSuffix = '&key=' + apiKey + "&country=US";
+  var limit = ss.getLastRow(); //The last row of the spreadsheet with something in it
+  
+  for(var i=2; i<=limit; i++){
+    var isbn = sheet.getRange("D"+i).getDisplayValue().split(" ")[0];
+    if (isbn != ""){
+      var url = baseUrl + isbn + urlSuffix;
+      var response = UrlFetchApp.fetch(url).getContentText();
+      var data = JSON.parse(response);
+      if(data.items) {
+        //Set result to a default image
+        var result = "http://lgimages.s3.amazonaws.com/gc-md.gif";
+        //replace it if there is a thumbnail image.
+        if(data.items[0].volumeInfo.imageLinks && data.items[0].volumeInfo.imageLinks.thumbnail){
+          result = data.items[0].volumeInfo.imageLinks.thumbnail;
+        }
+        sheet.getRange("H"+i).setValue(result);
+        sheet.getRange("I"+i).setValue(url);
+      }else{
+        //This link is a placeholder image of a generic book cover
+        sheet.getRange("H"+i).setValue("http://lgimages.s3.amazonaws.com/gc-md.gif");
+        sheet.getRange("I"+i).setValue("Book not found in Google Books");
+      }
+    }else{
+      //If it doesn't have an ISBN, we assume it's a multimedia resource
+      sheet.getRange("H"+i).setValue("https://upload.wikimedia.org/wikipedia/commons/d/d0/DVD-Video_bottom-side.jpg");
+      sheet.getRange("I"+i).setValue("Multimedia Resource");
+    }
+  }
+}
